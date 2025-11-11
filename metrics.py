@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""
-Профессиональные метрики для оценки торговой стратегии
-"""
 
 import numpy as np
 import pandas as pd
@@ -11,23 +8,18 @@ from dataclasses import dataclass
 
 @dataclass
 class PerformanceMetrics:
-    """Структура для хранения метрик производительности"""
-    # Основные метрики доходности
     total_return: float
     total_return_pct: float
     annualized_return: float
 
-    # Риск
     max_drawdown: float
     max_drawdown_pct: float
     volatility: float
 
-    # Sharpe и Sortino ratios
     sharpe_ratio: float
     sortino_ratio: float
     calmar_ratio: float
 
-    # Торговые метрики
     total_trades: int
     winning_trades: int
     losing_trades: int
@@ -36,74 +28,48 @@ class PerformanceMetrics:
     avg_loss: float
     profit_factor: float
 
-    # Средняя длительность сделок
     avg_trade_duration: float
 
-    # Expectancy
     expectancy: float
 
-    # Recovery factor
     recovery_factor: float
 
 
 class TradingMetricsCalculator:
-    """Калькулятор профессиональных торговых метрик"""
 
     def __init__(self, initial_balance: float = 10000, risk_free_rate: float = 0.02):
-        """
-        Args:
-            initial_balance: Начальный баланс
-            risk_free_rate: Безрисковая ставка (годовая), по умолчанию 2%
-        """
         self.initial_balance = initial_balance
         self.risk_free_rate = risk_free_rate
 
     def calculate_metrics(self, portfolio_values: List[float],
                          closed_trades: List[Dict],
                          days_traded: Optional[int] = None) -> PerformanceMetrics:
-        """
-        Вычислить все метрики производительности
-
-        Args:
-            portfolio_values: История значений портфеля
-            closed_trades: Список закрытых сделок
-            days_traded: Количество дней торговли (для аннуализации)
-
-        Returns:
-            PerformanceMetrics
-        """
         if not portfolio_values or len(portfolio_values) < 2:
             return self._empty_metrics()
 
         portfolio_values = np.array(portfolio_values)
         final_value = portfolio_values[-1]
 
-        # Основные метрики доходности
         total_return = final_value - self.initial_balance
         total_return_pct = (total_return / self.initial_balance) * 100
 
-        # Аннуализированная доходность
         if days_traded and days_traded > 0:
             years = days_traded / 365
             annualized_return = (((final_value / self.initial_balance) ** (1 / years)) - 1) * 100
         else:
             annualized_return = 0.0
 
-        # Drawdown
         max_dd, max_dd_pct = self._calculate_max_drawdown(portfolio_values)
 
-        # Волатильность
         returns = np.diff(portfolio_values) / portfolio_values[:-1]
-        volatility = np.std(returns) * np.sqrt(252)  # Аннуализированная
+        volatility = np.std(returns) * np.sqrt(252)
 
-        # Sharpe Ratio
         if volatility > 0:
             excess_returns = returns - (self.risk_free_rate / 252)
             sharpe_ratio = (np.mean(excess_returns) / np.std(returns)) * np.sqrt(252)
         else:
             sharpe_ratio = 0.0
 
-        # Sortino Ratio (использует только downside volatility)
         downside_returns = returns[returns < 0]
         if len(downside_returns) > 0:
             downside_std = np.std(downside_returns) * np.sqrt(252)
@@ -115,16 +81,13 @@ class TradingMetricsCalculator:
         else:
             sortino_ratio = sharpe_ratio
 
-        # Calmar Ratio (annualized return / max drawdown)
         if abs(max_dd_pct) > 0:
             calmar_ratio = annualized_return / abs(max_dd_pct)
         else:
             calmar_ratio = 0.0
 
-        # Торговые метрики
         trade_metrics = self._calculate_trade_metrics(closed_trades)
 
-        # Recovery Factor
         if abs(max_dd) > 0:
             recovery_factor = total_return / abs(max_dd)
         else:
@@ -136,7 +99,7 @@ class TradingMetricsCalculator:
             annualized_return=annualized_return,
             max_drawdown=max_dd,
             max_drawdown_pct=max_dd_pct,
-            volatility=volatility * 100,  # В процентах
+            volatility=volatility * 100,
             sharpe_ratio=sharpe_ratio,
             sortino_ratio=sortino_ratio,
             calmar_ratio=calmar_ratio,
@@ -145,7 +108,6 @@ class TradingMetricsCalculator:
         )
 
     def _calculate_max_drawdown(self, portfolio_values: np.ndarray) -> tuple:
-        """Вычислить максимальную просадку"""
         cummax = np.maximum.accumulate(portfolio_values)
         drawdowns = portfolio_values - cummax
         max_dd = np.min(drawdowns)
@@ -153,7 +115,6 @@ class TradingMetricsCalculator:
         return max_dd, max_dd_pct
 
     def _calculate_trade_metrics(self, closed_trades: List[Dict]) -> Dict:
-        """Вычислить метрики по закрытым сделкам"""
         if not closed_trades:
             return {
                 'total_trades': 0,
@@ -169,7 +130,6 @@ class TradingMetricsCalculator:
 
         total_trades = len(closed_trades)
 
-        # Разделяем на прибыльные и убыточные
         winning_trades = [t for t in closed_trades if t.get('pnl_after_commission', 0) > 0]
         losing_trades = [t for t in closed_trades if t.get('pnl_after_commission', 0) <= 0]
 
@@ -178,11 +138,9 @@ class TradingMetricsCalculator:
 
         win_rate = (n_wins / total_trades) * 100 if total_trades > 0 else 0.0
 
-        # Средние прибыль и убыток
         avg_win = np.mean([t['pnl_after_commission'] for t in winning_trades]) if winning_trades else 0.0
         avg_loss = np.mean([t['pnl_after_commission'] for t in losing_trades]) if losing_trades else 0.0
 
-        # Profit Factor
         total_wins = sum(t['pnl_after_commission'] for t in winning_trades)
         total_losses = abs(sum(t['pnl_after_commission'] for t in losing_trades))
 
@@ -191,11 +149,9 @@ class TradingMetricsCalculator:
         else:
             profit_factor = float('inf') if total_wins > 0 else 0.0
 
-        # Средняя длительность сделки
         durations = [t.get('duration', 0) for t in closed_trades]
         avg_duration = np.mean(durations) if durations else 0.0
 
-        # Expectancy (математическое ожидание)
         if total_trades > 0:
             expectancy = ((win_rate / 100) * avg_win) - ((1 - win_rate / 100) * abs(avg_loss))
         else:
@@ -214,7 +170,6 @@ class TradingMetricsCalculator:
         }
 
     def _empty_metrics(self) -> PerformanceMetrics:
-        """Пустые метрики при отсутствии данных"""
         return PerformanceMetrics(
             total_return=0.0,
             total_return_pct=0.0,
@@ -238,7 +193,6 @@ class TradingMetricsCalculator:
         )
 
     def print_metrics(self, metrics: PerformanceMetrics):
-        """Красиво вывести метрики"""
         print(f"""
 {'='*80}
 📊 АНАЛИЗ ПРОИЗВОДИТЕЛЬНОСТИ
@@ -285,7 +239,6 @@ class TradingMetricsCalculator:
         """)
 
     def _is_production_ready(self, metrics: PerformanceMetrics) -> bool:
-        """Проверка готовности к продакшн"""
         return (
             metrics.sharpe_ratio > 1.0 and
             metrics.profit_factor > 1.5 and
@@ -297,10 +250,8 @@ class TradingMetricsCalculator:
 
 
 def main():
-    """Пример использования"""
     calculator = TradingMetricsCalculator(initial_balance=10000)
 
-    # Пример данных
     portfolio_values = [10000, 10200, 10150, 10300, 10100, 10500, 10800, 10600, 11000]
 
     closed_trades = [

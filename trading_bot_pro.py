@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 🚀 PRODUCTION-READY ТОРГОВЫЙ БОТ v7.0
 С реальными данными, профессиональным риск-менеджментом и метриками
@@ -15,13 +14,11 @@ from dataclasses import dataclass
 import warnings
 warnings.filterwarnings('ignore')
 
-# ML imports
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import BaseCallback
 import torch
 import torch.nn as nn
 
-# Наши модули
 from data_fetcher import HistoricalDataFetcher
 from risk_manager import DynamicRiskManager, RiskConfig
 from metrics import TradingMetricsCalculator, PerformanceMetrics
@@ -56,18 +53,13 @@ class ProductionTradingEnvironment(gym.Env):
         self.df = df.reset_index(drop=True)
         self.initial_balance = initial_balance
 
-        # Риск-менеджмент
         self.risk_manager = DynamicRiskManager(risk_config or RiskConfig())
 
-        # Observation space: [текущие индикаторы + состояние портфеля]
-        # Размер зависит от количества колонок в df
         n_features = len(df.columns) + 10  # +10 для portfolio state
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(n_features,), dtype=np.float32
         )
 
-        # Action space: непрерывное [-1, 1]
-        # -1 = продать всё, 0 = держать, +1 = купить максимум
         self.action_space = spaces.Box(
             low=np.array([-1.0], dtype=np.float32),
             high=np.array([1.0], dtype=np.float32),
@@ -82,15 +74,12 @@ class ProductionTradingEnvironment(gym.Env):
         self.btc_amount = 0.0
         self.current_step = 0
 
-        # Торговля
         self.active_trade: Optional[Trade] = None
         self.closed_trades: List[Dict] = []
 
-        # История для метрик
         self.portfolio_history = [self.initial_balance]
         self.balance_history = [self.initial_balance]
 
-        # Статистика
         self.total_commission = 0.0
 
     def reset(self, seed: Optional[int] = None) -> Tuple[np.ndarray, Dict]:
@@ -104,18 +93,14 @@ class ProductionTradingEnvironment(gym.Env):
         """Выполнение шага"""
         self.current_step += 1
 
-        # Защита от выхода за границы данных
         if self.current_step >= len(self.df) - 1:
             return self._get_observation(), 0.0, True, False, self._get_info()
 
-        # Получаем текущие данные
         current_data = self.df.iloc[self.current_step]
         current_price = float(current_data['close'])
 
-        # Сохраняем предыдущее состояние для расчета награды
         prev_portfolio = self._get_portfolio_value()
 
-        # Проверяем активную сделку на stop-loss/take-profit
         if self.active_trade:
             self.active_trade.steps_held += 1
             should_close, reason = self.risk_manager.should_close_position(
@@ -130,19 +115,15 @@ class ProductionTradingEnvironment(gym.Env):
             if should_close:
                 self._close_position(current_price, reason)
 
-        # Выполняем действие агента
         action_value = float(action[0])
         self._execute_action(action_value, current_price, current_data)
 
-        # Вычисляем награду (УПРОЩЕННАЯ - только изменение портфеля)
         current_portfolio = self._get_portfolio_value()
         reward = self._calculate_reward(prev_portfolio, current_portfolio)
 
-        # Сохраняем историю
         self.portfolio_history.append(current_portfolio)
         self.balance_history.append(self.balance)
 
-        # Проверяем условия завершения
         terminated = False
         truncated = current_portfolio < self.initial_balance * 0.5  # Потеря 50%
 
@@ -153,16 +134,12 @@ class ProductionTradingEnvironment(gym.Env):
     def _execute_action(self, action: float, current_price: float, current_data: pd.Series):
         """Выполнение действия"""
 
-        # HOLD: -0.15 < action < 0.15
         if abs(action) < 0.15:
             return
 
-        # Получаем текущую экспозицию
         current_exposure = self.btc_amount * current_price
 
-        # BUY: action >= 0.15
         if action >= 0.15 and not self.active_trade:
-            # Проверяем возможность открытия сделки
             can_trade, reason = self.risk_manager.can_open_trade(
                 balance=self.balance,
                 current_exposure=current_exposure
@@ -171,7 +148,6 @@ class ProductionTradingEnvironment(gym.Env):
             if not can_trade:
                 return
 
-            # Вычисляем размер позиции через риск-менеджмент
             signal_strength = min(1.0, abs(action) * 1.5)
             volatility = float(current_data.get('volatility', 0.02))
             atr = float(current_data.get('atr', current_price * 0.02))
@@ -186,26 +162,22 @@ class ProductionTradingEnvironment(gym.Env):
             if position_size < 100:
                 return
 
-            # Вычисляем комиссию
             commission = self.risk_manager.calculate_commission(position_size)
 
             if position_size + commission > self.balance:
                 return
 
-            # Открываем сделку
             btc_to_buy = position_size / current_price
             self.balance -= (position_size + commission)
             self.btc_amount += btc_to_buy
             self.total_commission += commission
 
-            # Вычисляем stop-loss и take-profit
             sl, tp = self.risk_manager.calculate_stop_loss_take_profit(
                 entry_price=current_price,
                 is_long=True,
                 atr=atr
             )
 
-            # Создаем Trade объект
             self.active_trade = Trade(
                 entry_price=current_price,
                 entry_time=int(self.current_step),
@@ -216,7 +188,6 @@ class ProductionTradingEnvironment(gym.Env):
                 take_profit=tp
             )
 
-        # SELL: action <= -0.15
         elif action <= -0.15 and self.active_trade:
             self._close_position(current_price, "agent_decision")
 
@@ -225,22 +196,18 @@ class ProductionTradingEnvironment(gym.Env):
         if not self.active_trade:
             return
 
-        # Вычисляем выручку
         revenue = self.active_trade.position_size * exit_price
         commission = self.risk_manager.calculate_commission(revenue)
 
-        # Обновляем баланс
         self.balance += (revenue - commission)
         self.btc_amount -= self.active_trade.position_size
         self.total_commission += commission
 
-        # Вычисляем PnL
         cost = self.active_trade.position_size * self.active_trade.entry_price
         pnl = revenue - cost
         pnl_after_commission = pnl - (commission * 2)  # Вход + выход
         pnl_pct = (pnl / cost) * 100
 
-        # Записываем результат
         trade_result = {
             'entry_price': self.active_trade.entry_price,
             'exit_price': exit_price,
@@ -256,10 +223,8 @@ class ProductionTradingEnvironment(gym.Env):
 
         self.closed_trades.append(trade_result)
 
-        # Обновляем риск-менеджер
         self.risk_manager.record_trade_result(pnl_after_commission)
 
-        # Закрываем сделку
         self.active_trade = None
 
     def _calculate_reward(self, prev_portfolio: float, current_portfolio: float) -> float:
@@ -275,14 +240,11 @@ class ProductionTradingEnvironment(gym.Env):
         portfolio_change = current_portfolio - prev_portfolio
         portfolio_change_pct = (portfolio_change / prev_portfolio) * 100
 
-        # Масштабируем для стабильного обучения: 1% = +100 reward
         reward = portfolio_change_pct * 100
 
-        # Дополнительно наказываем за слишком большие убытки
         if portfolio_change_pct < -2:
             reward *= 1.5  # Усиливаем негативный сигнал
 
-        # Clip для стабильности
         reward = np.clip(reward, -500, 500)
 
         return float(reward)
@@ -298,17 +260,14 @@ class ProductionTradingEnvironment(gym.Env):
 
         obs = []
 
-        # 1. Нормализованные технические индикаторы из DataFrame
         close_price = float(current_data['close'])
 
-        # Добавляем все доступные индикаторы
         for col in self.df.columns:
             if col in ['timestamp', 'open', 'high', 'low', 'volume']:
                 continue
 
             value = float(current_data[col])
 
-            # Нормализация разных типов индикаторов
             if col == 'close':
                 obs.append(value / 70000)  # Нормализация цены
             elif col.startswith('rsi'):
@@ -318,10 +277,8 @@ class ProductionTradingEnvironment(gym.Env):
             elif col.startswith('volume'):
                 obs.append(np.log1p(value) / 20)  # Log нормализация объема
             else:
-                # Общая нормализация для других индикаторов
                 obs.append(value / close_price if close_price > 0 else 0)
 
-        # 2. Состояние портфеля (10 параметров)
         portfolio_value = self._get_portfolio_value()
 
         obs.extend([
@@ -331,7 +288,6 @@ class ProductionTradingEnvironment(gym.Env):
             1.0 if self.active_trade else 0.0,  # Есть ли активная сделка
         ])
 
-        # Информация об активной сделке
         if self.active_trade:
             unrealized_pnl = (close_price - self.active_trade.entry_price) * self.active_trade.position_size
             unrealized_pnl_pct = ((close_price - self.active_trade.entry_price) /
@@ -347,7 +303,6 @@ class ProductionTradingEnvironment(gym.Env):
         else:
             obs.extend([0, 0, 0, 0, 0])
 
-        # Недавняя производительность
         if len(self.closed_trades) > 0:
             recent_trades = self.closed_trades[-5:]
             wins = sum(1 for t in recent_trades if t['pnl_after_commission'] > 0)
@@ -385,11 +340,9 @@ class DetailedCallback(BaseCallback):
         self.metrics_calculator = TradingMetricsCalculator()
 
     def _on_step(self) -> bool:
-        # Периодическая оценка
         if self.n_calls % self.eval_freq == 0:
             self._evaluate_agent()
 
-        # Логирование прогресса
         if self.n_calls % self.log_freq == 0:
             if 'infos' in self.locals and len(self.locals['infos']) > 0:
                 info = self.locals['infos'][0]
@@ -406,7 +359,6 @@ class DetailedCallback(BaseCallback):
         print(f"🧪 ОЦЕНКА АГЕНТА (шаг {self.n_calls})")
         print(f"{'='*60}")
 
-        # Вычисляем метрики на train environment
         if len(self.eval_env.portfolio_history) > 10:
             metrics = self.metrics_calculator.calculate_metrics(
                 portfolio_values=self.eval_env.portfolio_history,
@@ -420,7 +372,6 @@ class DetailedCallback(BaseCallback):
             print(f"💎 Profit Factor: {metrics.profit_factor:.2f}")
             print(f"⚠️  Max DD: {metrics.max_drawdown_pct:.2f}%")
 
-            # Сохраняем лучшую модель
             if metrics.sharpe_ratio > self.best_sharpe:
                 self.best_sharpe = metrics.sharpe_ratio
                 self.model.save("./models/best_model_by_sharpe")
@@ -443,7 +394,6 @@ def train_agent(train_df: pd.DataFrame, val_df: pd.DataFrame,
 {'='*80}
     """)
 
-    # Создаем окружение
     risk_config = RiskConfig(
         max_position_size_pct=15.0,
         max_risk_per_trade_pct=2.0,
@@ -454,7 +404,6 @@ def train_agent(train_df: pd.DataFrame, val_df: pd.DataFrame,
 
     train_env = ProductionTradingEnvironment(train_df, initial_balance=10000, risk_config=risk_config)
 
-    # Создаем агента
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"🖥️  Device: {device}")
 
@@ -478,10 +427,8 @@ def train_agent(train_df: pd.DataFrame, val_df: pd.DataFrame,
         verbose=1
     )
 
-    # Callback
     callback = DetailedCallback(train_env, log_freq=2000, eval_freq=10000)
 
-    # Обучение
     print("\n🎓 НАЧАЛО ОБУЧЕНИЯ...\n")
     try:
         model.learn(
@@ -493,7 +440,6 @@ def train_agent(train_df: pd.DataFrame, val_df: pd.DataFrame,
     except KeyboardInterrupt:
         print("\n⚠️ Обучение прервано")
 
-    # Сохраняем финальную модель
     os.makedirs("./models", exist_ok=True)
     model.save("./models/trading_bot_pro_final")
     print("💾 Финальная модель сохранена")
@@ -525,7 +471,6 @@ def evaluate_agent(model, test_df: pd.DataFrame, initial_balance: float = 10000)
         action, _ = model.predict(obs, deterministic=True)
         obs, reward, done, truncated, info = test_env.step(action)
 
-    # Вычисляем финальные метрики
     print("\n📊 ФИНАЛЬНЫЕ РЕЗУЛЬТАТЫ:\n")
 
     calculator = TradingMetricsCalculator(initial_balance=initial_balance)
@@ -557,19 +502,15 @@ def main():
     ╚═══════════════════════════════════════════════════════════╝
     """)
 
-    # 1. Загружаем данные
     print("\n📥 ЗАГРУЗКА ДАННЫХ...")
     fetcher = HistoricalDataFetcher(symbol='BTC/USDT', timeframe='1h')
     df = fetcher.fetch_data(days=365, force_refresh=False)
     df = fetcher.add_technical_indicators(df)
 
-    # 2. Разделяем на train/val/test
     train_df, val_df, test_df = fetcher.split_data(df, train_ratio=0.7, val_ratio=0.15)
 
-    # 3. Обучение
     model, train_env = train_agent(train_df, val_df, total_timesteps=200000)
 
-    # 4. Тестирование
     metrics, test_env = evaluate_agent(model, test_df)
 
     print("\n✅ ГОТОВО!")

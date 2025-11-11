@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""
-🎯 Walk-Forward Validation для реалистичной оценки торговой стратегии
-
-Walk-Forward подход:
-1. Разбиваем данные на периоды (например, по 3 месяца)
-2. Обучаем модель на train window
-3. Тестируем на следующем периоде (validation window)
-4. Сдвигаем окно и повторяем
-5. Получаем реалистичную оценку на out-of-sample данных
-
-Это предотвращает overfitting и дает честную оценку!
-"""
 
 import numpy as np
 import pandas as pd
@@ -31,35 +19,20 @@ from metrics import TradingMetricsCalculator, PerformanceMetrics
 
 
 class WalkForwardValidator:
-    """Walk-Forward валидатор"""
 
     def __init__(self, df: pd.DataFrame, train_window_days: int = 180,
                  test_window_days: int = 30, step_days: int = 30):
-        """
-        Args:
-            df: Полный датасет
-            train_window_days: Размер обучающего окна (дней)
-            test_window_days: Размер тестового окна (дней)
-            step_days: Шаг сдвига окна (дней)
-        """
         self.df = df.sort_values('timestamp') if 'timestamp' in df.columns else df
         self.train_window_days = train_window_days
         self.test_window_days = test_window_days
         self.step_days = step_days
 
-        # Предполагаем 1h свечи
         self.hours_per_day = 24
         self.train_window_size = train_window_days * self.hours_per_day
         self.test_window_size = test_window_days * self.hours_per_day
         self.step_size = step_days * self.hours_per_day
 
     def generate_folds(self) -> List[Tuple[pd.DataFrame, pd.DataFrame]]:
-        """
-        Генерация фолдов для walk-forward валидации
-
-        Returns:
-            List[(train_df, test_df)]
-        """
         folds = []
         start_idx = 0
 
@@ -72,7 +45,6 @@ class WalkForwardValidator:
 
             folds.append((train_df, test_df))
 
-            # Сдвигаем окно
             start_idx += self.step_size
 
         print(f"📊 Сгенерировано {len(folds)} фолдов для walk-forward валидации")
@@ -81,12 +53,6 @@ class WalkForwardValidator:
     def run_validation(self, folds: List[Tuple[pd.DataFrame, pd.DataFrame]],
                       training_steps: int = 50000, initial_balance: float = 10000
                       ) -> List[PerformanceMetrics]:
-        """
-        Запуск walk-forward валидации
-
-        Returns:
-            List[PerformanceMetrics] для каждого фолда
-        """
         all_metrics = []
         all_test_results = []
 
@@ -106,12 +72,10 @@ class WalkForwardValidator:
             print(f"  📊 Train: {len(train_df)} свечей")
             print(f"  📊 Test:  {len(test_df)} свечей")
 
-            # Создаем окружение для обучения
             train_env = ProductionTradingEnvironment(
                 train_df, initial_balance=initial_balance, risk_config=risk_config
             )
 
-            # Создаем новую модель для каждого фолда (реалистично!)
             policy_kwargs = dict(
                 activation_fn=nn.ReLU,
                 net_arch=dict(pi=[256, 128], qf=[256, 128]),
@@ -132,11 +96,9 @@ class WalkForwardValidator:
                 verbose=0
             )
 
-            # Обучение
             print(f"\n  🎓 Обучение на {training_steps} шагов...")
             model.learn(total_timesteps=training_steps, progress_bar=False)
 
-            # Тестирование
             print(f"  🧪 Тестирование на out-of-sample данных...")
             test_env = ProductionTradingEnvironment(
                 test_df, initial_balance=initial_balance, risk_config=risk_config
@@ -150,7 +112,6 @@ class WalkForwardValidator:
                 action, _ = model.predict(obs, deterministic=True)
                 obs, reward, done, truncated, info = test_env.step(action)
 
-            # Вычисляем метрики
             calculator = TradingMetricsCalculator(initial_balance=initial_balance)
             metrics = calculator.calculate_metrics(
                 portfolio_values=test_env.portfolio_history,
@@ -167,7 +128,6 @@ class WalkForwardValidator:
                 'metrics': metrics
             })
 
-            # Краткий отчет
             print(f"\n  📊 Результаты фолда {fold_idx + 1}:")
             print(f"    ROI: {metrics.total_return_pct:+.2f}%")
             print(f"    Sharpe: {metrics.sharpe_ratio:.3f}")
@@ -178,13 +138,11 @@ class WalkForwardValidator:
         return all_metrics, all_test_results
 
     def print_summary(self, all_metrics: List[PerformanceMetrics]):
-        """Вывод сводки по всем фолдам"""
 
         print(f"\n{'='*80}")
         print(f"📊 ИТОГОВАЯ СТАТИСТИКА WALK-FORWARD VALIDATION")
         print(f"{'='*80}")
 
-        # Собираем метрики
         returns = [m.total_return_pct for m in all_metrics]
         sharpes = [m.sharpe_ratio for m in all_metrics]
         win_rates = [m.win_rate for m in all_metrics]
@@ -216,12 +174,10 @@ class WalkForwardValidator:
         print(f"  Средний:           {np.mean(profit_factors):.2f}")
         print(f"  Медианный:         {np.median(profit_factors):.2f}")
 
-        # Оценка готовности к продакшену
         print(f"\n{'='*80}")
         print(f"🎯 ОЦЕНКА ГОТОВНОСТИ К ПРОДАКШЕНУ")
         print(f"{'='*80}")
 
-        # Критерии
         criteria = {
             'Средний ROI > 0%': np.mean(returns) > 0,
             'Средний Sharpe > 0.5': np.mean(sharpes) > 0.5,
@@ -255,7 +211,6 @@ class WalkForwardValidator:
 
 
 def main():
-    """Главная функция"""
 
     print("""
     ╔═══════════════════════════════════════════════════════════╗
@@ -266,7 +221,6 @@ def main():
     ╚═══════════════════════════════════════════════════════════╝
     """)
 
-    # Загружаем данные
     print("\n📥 ЗАГРУЗКА ИСТОРИЧЕСКИХ ДАННЫХ...")
     fetcher = HistoricalDataFetcher(symbol='BTC/USDT', timeframe='1h')
     df = fetcher.fetch_data(days=365, force_refresh=False)
@@ -275,35 +229,29 @@ def main():
     print(f"✅ Загружено {len(df)} свечей")
     print(f"   Период: {df.index[0]} → {df.index[-1]}")
 
-    # Создаем валидатор
     validator = WalkForwardValidator(
         df=df,
-        train_window_days=120,  # 4 месяца обучения
-        test_window_days=30,    # 1 месяц тестирования
-        step_days=30           # Сдвиг на 1 месяц
+        train_window_days=120,
+        test_window_days=30,
+        step_days=30
     )
 
-    # Генерируем фолды
     folds = validator.generate_folds()
 
-    # Запускаем валидацию
     print(f"\n🚀 ЗАПУСК WALK-FORWARD VALIDATION...")
     print(f"⚠️  Это займет некоторое время (обучение + тестирование каждого фолда)...\n")
 
     all_metrics, all_results = validator.run_validation(
         folds=folds,
-        training_steps=30000,  # Меньше шагов для каждого фолда (быстрее)
+        training_steps=30000,
         initial_balance=10000
     )
 
-    # Выводим итоговую статистику
     is_production_ready = validator.print_summary(all_metrics)
 
-    # Сохраняем результаты
     results_dir = "./validation_results"
     os.makedirs(results_dir, exist_ok=True)
 
-    # Сохраняем детальные результаты
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_file = f"{results_dir}/walk_forward_{timestamp}.txt"
 

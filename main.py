@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 🚀 УЛУЧШЕННЫЙ ТОРГОВЫЙ БОТ v5.0
 Исправленная система наград и обучения
@@ -17,7 +16,6 @@ from typing import Dict, Tuple, Optional, List
 import json
 from dataclasses import dataclass
 
-# Импорты для RL
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import BaseCallback
 import torch
@@ -113,15 +111,12 @@ class ImprovedTradingEnvironment(gym.Env):
         self.initial_balance = initial_balance
         self.detailed_logging = detailed_logging
         
-        # Непрерывное пространство действий для SAC
-        # action[0]: размер позиции (-1 = продать все, 0 = держать, 1 = купить максимум)
         self.action_space = spaces.Box(
             low=np.array([-1.0], dtype=np.float32),
             high=np.array([1.0], dtype=np.float32),
             dtype=np.float32
         )
         
-        # Расширенное пространство наблюдений (40 параметров)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(40,), dtype=np.float32
         )
@@ -150,15 +145,12 @@ class ImprovedTradingEnvironment(gym.Env):
         self.btc_amount = 0.0
         self.current_price = 67000.0
         
-        # История
         self.price_history = []
         self.action_history = []
         self.reward_history = []
         
-        # Трекер сделок
         self.trade_tracker = TradeTracker()
         
-        # Статистика
         self.total_steps = 0
         self.consecutive_holds = 0
         self.last_action_type = 'HOLD'
@@ -174,26 +166,20 @@ class ImprovedTradingEnvironment(gym.Env):
         """Выполнение действия"""
         self.total_steps += 1
 
-        # Обновляем рыночные данные ПЕРЕД сохранением состояния
         self._update_market_data()
 
-        # Защита от None цены
         if self.current_price is None or self.current_price <= 0:
             print(f"⚠️ КРИТИЧЕСКАЯ ОШИБКА: current_price = {self.current_price}, сброс на 67000")
             self.current_price = 67000.0
 
-        # Сохраняем предыдущее состояние
         prev_portfolio_value = self._get_portfolio_value()
         prev_balance = self.balance
         prev_btc = self.btc_amount
         
-        # Обновляем счетчик шагов для активных сделок
         self.trade_tracker.update_steps()
         
-        # Выполняем действие
         action_result = self._execute_action(action[0])  # Берем первый элемент массива
         
-        # Рассчитываем награду
         reward = self._calculate_reward(
             action[0],
             action_result,
@@ -202,19 +188,16 @@ class ImprovedTradingEnvironment(gym.Env):
             prev_btc
         )
         
-        # Сохраняем историю
         self.action_history.append(action[0])
         self.reward_history.append(reward)
         if len(self.action_history) > 100:
             self.action_history = self.action_history[-100:]
             self.reward_history = self.reward_history[-100:]
         
-        # Проверяем условия завершения
         current_portfolio_value = self._get_portfolio_value()
         terminated = False
         truncated = current_portfolio_value < self.initial_balance * 0.1  # Потеря 90%
         
-        # Информация для логирования
         info = {
             'portfolio_value': current_portfolio_value,
             'balance': self.balance,
@@ -233,17 +216,11 @@ class ImprovedTradingEnvironment(gym.Env):
         """Выполнение действия с непрерывным значением"""
         result = {'type': 'UNKNOWN', 'success': False, 'details': {}}
 
-        # Критическая проверка цены
         if self.current_price is None or self.current_price <= 0:
             print(f"⚠️ ОШИБКА в _execute_action: current_price = {self.current_price}")
             self.current_price = 67000.0
 
-        # Интерпретируем непрерывное действие
-        # -1.0 до -0.1: SELL (продажа)
-        # -0.1 до +0.1: HOLD (удержание)
-        # +0.1 до +1.0: BUY (покупка)
         
-        # HOLD
         if -0.1 <= action <= 0.1:
             self.consecutive_holds += 1
             result['type'] = 'HOLD'
@@ -253,11 +230,9 @@ class ImprovedTradingEnvironment(gym.Env):
                 unrealized = self.trade_tracker.get_unrealized_pnl(self.current_price)
                 print(f"⚪ HOLD @ ${self.current_price:.2f} | Unrealized: ${unrealized:+.2f}")
                 
-        # BUY
         elif action > 0.1:
             self.consecutive_holds = 0
             
-            # Размер покупки зависит от силы сигнала
             buy_strength = min(1.0, max(0.1, abs(action)))
             max_buy = self.balance * 0.4 * buy_strength  # До 40% баланса
             
@@ -269,12 +244,10 @@ class ImprovedTradingEnvironment(gym.Env):
                 if self.detailed_logging:
                     print(f"⛔ BUY FAILED: Недостаточно средств (${self.balance:.2f})")
             else:
-                # Выполняем покупку
                 btc_to_buy = max_buy / self.current_price
                 commission = max_buy * 0.001
                 
                 if max_buy + commission > self.balance:
-                    # Корректируем размер покупки
                     max_buy = self.balance * 0.95  # Оставляем 5% на комиссию
                     btc_to_buy = max_buy / self.current_price
                     commission = max_buy * 0.001
@@ -282,7 +255,6 @@ class ImprovedTradingEnvironment(gym.Env):
                 self.balance -= (max_buy + commission)
                 self.btc_amount += btc_to_buy
                 
-                # Регистрируем сделку
                 self.trade_tracker.open_trade(
                     entry_price=self.current_price,
                     position_size=btc_to_buy,
@@ -300,7 +272,6 @@ class ImprovedTradingEnvironment(gym.Env):
                 
                 print(f"🟢 BUY: {btc_to_buy:.6f} BTC @ ${self.current_price:.2f} | Cost: ${max_buy:.2f} | Strength: {buy_strength:.2f}")
                 
-        # SELL
         elif action < -0.1:
             self.consecutive_holds = 0
             
@@ -312,18 +283,15 @@ class ImprovedTradingEnvironment(gym.Env):
                 if self.detailed_logging:
                     print(f"⛔ SELL FAILED: Нет позиции для продажи")
             else:
-                # Размер продажи зависит от силы сигнала
                 sell_strength = min(1.0, max(0.1, abs(action)))
                 btc_to_sell = min(self.btc_amount, self.btc_amount * sell_strength)
                 
                 sell_amount = btc_to_sell * self.current_price
                 commission = sell_amount * 0.001
                 
-                # Исполняем продажу
                 self.balance += (sell_amount - commission)
                 self.btc_amount -= btc_to_sell
                 
-                # Закрываем соответствующие сделки
                 closed_trades = []
                 trades_to_close = max(1, int(len(self.trade_tracker.active_trades) * sell_strength))
                 
@@ -345,7 +313,6 @@ class ImprovedTradingEnvironment(gym.Env):
                     'strength': sell_strength
                 }
                 
-                # Логирование с результатами
                 if closed_trades:
                     total_pnl = sum(t['pnl_after_commission'] for t in closed_trades)
                     avg_pnl_pct = np.mean([t['pnl_percent'] for t in closed_trades])
@@ -366,39 +333,30 @@ class ImprovedTradingEnvironment(gym.Env):
         """
         reward = 0.0
 
-        # 1. ОСНОВНАЯ НАГРАДА: Изменение портфеля в процентах
         current_portfolio = self._get_portfolio_value()
         portfolio_change_pct = ((current_portfolio - prev_portfolio) / prev_portfolio) * 100
-        # Масштабируем: 1% прибыли = +10 награды
         reward += np.clip(portfolio_change_pct * 10, -20, 20)
 
-        # 2. НАГРАДА ЗА РЕЗУЛЬТАТЫ ЗАКРЫТЫХ СДЕЛОК
         if action_result['type'] == 'SELL' and action_result['success']:
             closed_trades = action_result['details'].get('closed_trades', [])
 
             for trade in closed_trades:
                 pnl_pct = trade['pnl_percent']
 
-                # Нелинейная награда: больше награда за большую прибыль
                 if pnl_pct > 0:
-                    # Прибыльная сделка: от 0 до +15
                     trade_reward = np.clip(pnl_pct * 3, 0, 15)
                 else:
-                    # Убыточная сделка: от 0 до -15
                     trade_reward = np.clip(pnl_pct * 3, -15, 0)
 
                 reward += trade_reward
 
-                # Бонус за терпение с прибыльной позицией
                 if pnl_pct > 0.5 and trade['steps_held'] > 10:
                     patience_bonus = min(5, trade['steps_held'] * 0.2)
                     reward += patience_bonus
 
-                # Штраф за быструю продажу в убыток
                 if pnl_pct < -1 and trade['steps_held'] < 5:
                     reward -= 3
 
-        # 3. НАГРАДА ЗА УДЕРЖАНИЕ ПРИБЫЛЬНЫХ ПОЗИЦИЙ (HOLD)
         if abs(action) <= 0.1 and self.trade_tracker.active_trades:
             unrealized_pnl = self.trade_tracker.get_unrealized_pnl(self.current_price)
             unrealized_pct = (unrealized_pnl / prev_portfolio) * 100
@@ -408,22 +366,18 @@ class ImprovedTradingEnvironment(gym.Env):
             elif unrealized_pct < -2:  # Убыток > 2%
                 reward -= min(5, abs(unrealized_pct) * 0.5)  # Наказываем удержание убытков
 
-        # 4. ШТРАФЫ ЗА НЕУДАЧНЫЕ ДЕЙСТВИЯ
         if not action_result['success']:
             if abs(action) > 0.3:  # Сильный сигнал, но не сработал
                 reward -= 3
             elif abs(action) > 0.1:  # Слабый сигнал
                 reward -= 1
 
-        # 5. ПООЩРЕНИЕ АКТИВНОСТИ на старте
         if self.total_steps < 1000 and action_result['success'] and abs(action) > 0.1:
             reward += 1
 
-        # 6. ШТРАФ ЗА ЧРЕЗМЕРНОЕ БЕЗДЕЙСТВИЕ
         if self.consecutive_holds > 30 and not self.trade_tracker.active_trades:
             reward -= 2
 
-        # Clip финальной награды для стабильности
         reward = np.clip(reward, -50, 50)
 
         return reward
@@ -435,26 +389,20 @@ class ImprovedTradingEnvironment(gym.Env):
                 ticker = self.exchange.fetch_ticker('BTC/USDT')
                 new_price = ticker.get('last', None)
 
-                # Проверяем валидность полученной цены
                 if new_price and isinstance(new_price, (int, float)) and new_price > 0:
                     self.current_price = float(new_price)
                 else:
-                    # Если цена невалидна, используем последнюю известную
                     if self.current_price is None or self.current_price <= 0:
                         self.current_price = 67000.0
-                    # иначе оставляем текущую цену
             else:
-                # Реалистичная симуляция цены
                 if self.current_price is None or len(self.price_history) == 0:
                     self.current_price = 67000.0
                 else:
-                    # Добавляем тренд и волатильность
                     trend = np.random.choice([-0.0001, 0, 0.0001], p=[0.3, 0.4, 0.3])
                     volatility = np.random.normal(0, 0.002)
                     new_price = self.current_price * (1 + trend + volatility)
                     self.current_price = max(50000, min(80000, new_price))
 
-            # Добавляем в историю только валидные цены
             if self.current_price and self.current_price > 0:
                 self.price_history.append(self.current_price)
                 if len(self.price_history) > 100:
@@ -462,7 +410,6 @@ class ImprovedTradingEnvironment(gym.Env):
 
         except Exception as e:
             print(f"⚠️ Ошибка получения данных: {e}")
-            # В случае ошибки используем безопасное значение
             if self.current_price is None or self.current_price <= 0:
                 self.current_price = 67000.0
                 if len(self.price_history) == 0:
@@ -471,7 +418,6 @@ class ImprovedTradingEnvironment(gym.Env):
     def _get_portfolio_value(self) -> float:
         """Общая стоимость портфеля с защитой от ошибок"""
         if self.current_price is None or self.current_price <= 0:
-            # Аварийное восстановление
             self.current_price = 67000.0
         return self.balance + (self.btc_amount * self.current_price)
     
@@ -479,10 +425,8 @@ class ImprovedTradingEnvironment(gym.Env):
         """Расширенное наблюдение с полной информацией"""
         obs = []
         
-        # 1. Нормализованная цена и тренд (10 параметров)
         obs.append(self.current_price / 70000)  # Нормализация около среднего
         
-        # Ценовые изменения на разных таймфреймах
         for lookback in [1, 2, 5, 10, 20]:
             if len(self.price_history) > lookback:
                 price_change = (self.current_price - self.price_history[-lookback]) / self.price_history[-lookback]
@@ -490,7 +434,6 @@ class ImprovedTradingEnvironment(gym.Env):
             else:
                 obs.append(0)
         
-        # Скользящие средние
         if len(self.price_history) >= 20:
             sma_5 = np.mean(self.price_history[-5:])
             sma_20 = np.mean(self.price_history[-20:])
@@ -500,14 +443,12 @@ class ImprovedTradingEnvironment(gym.Env):
         else:
             obs.extend([0, 0, 0])
         
-        # Волатильность
         if len(self.price_history) >= 10:
             returns = np.diff(self.price_history[-10:]) / self.price_history[-10:-1]
             obs.append(np.std(returns) * 100)
         else:
             obs.append(0)
         
-        # 2. Состояние портфеля (10 параметров)
         portfolio_value = self._get_portfolio_value()
         
         obs.extend([
@@ -517,7 +458,6 @@ class ImprovedTradingEnvironment(gym.Env):
             len(self.trade_tracker.active_trades) / 10,  # Нормализованное количество сделок
         ])
         
-        # Информация о нереализованном PnL
         if self.trade_tracker.active_trades:
             unrealized = self.trade_tracker.get_unrealized_pnl(self.current_price)
             unrealized_pct = unrealized / self.initial_balance
@@ -532,14 +472,12 @@ class ImprovedTradingEnvironment(gym.Env):
         else:
             obs.extend([0, 0, 0])
         
-        # Доступные средства для покупки (важно!)
         max_buy_amount = self.balance * 0.3
         can_buy = 1.0 if max_buy_amount >= 100 else 0.0
         can_sell = 1.0 if self.btc_amount >= 0.0001 else 0.0
         
         obs.extend([can_buy, can_sell, max_buy_amount / self.initial_balance])
         
-        # 3. История торговли (10 параметров)
         if self.trade_tracker.closed_trades:
             recent_trades = self.trade_tracker.closed_trades[-10:]
             
@@ -561,7 +499,6 @@ class ImprovedTradingEnvironment(gym.Env):
         else:
             obs.extend([0, 0, 0, 0, 0])
         
-        # История последних действий
         if len(self.action_history) >= 10:
             recent_actions = self.action_history[-10:]
             action_distribution = [
@@ -573,17 +510,14 @@ class ImprovedTradingEnvironment(gym.Env):
         else:
             obs.extend([0, 0, 0])
         
-        # Средняя награда за последние действия
         if len(self.reward_history) >= 10:
             avg_recent_reward = np.mean(self.reward_history[-10:])
             obs.append(avg_recent_reward / 100)  # Нормализация
         else:
             obs.append(0)
         
-        # Индикатор последнего успешного действия
         obs.append(1.0 if self.last_action_type in ['BUY', 'SELL', 'HOLD'] else -1.0)
         
-        # 4. Дополнительная контекстная информация (10 параметров)
         obs.extend([
             self.consecutive_holds / 20,  # Нормализованное количество HOLD подряд
             self.total_steps / 1000,  # Прогресс обучения
@@ -591,7 +525,6 @@ class ImprovedTradingEnvironment(gym.Env):
             np.cos(self.total_steps * 0.01),
         ])
         
-        # Заполняем до 40 параметров
         while len(obs) < 40:
             obs.append(0.0)
         
@@ -610,13 +543,11 @@ class CustomCallback(BaseCallback):
         self.episode_count = 0
 
     def _on_step(self) -> bool:
-        # Детальное логирование
         if self.n_calls % self.log_freq == 0 and len(self.episode_rewards) > 0:
             recent_rewards = self.episode_rewards[-20:] if len(self.episode_rewards) >= 20 else self.episode_rewards
             mean_reward = np.mean(recent_rewards)
             std_reward = np.std(recent_rewards)
 
-            # Получаем info из env если доступно
             if 'infos' in self.locals and len(self.locals['infos']) > 0:
                 info = self.locals['infos'][0]
                 portfolio = info.get('portfolio_value', 0)
@@ -632,7 +563,6 @@ class CustomCallback(BaseCallback):
                 print(f"🎯 Лучшая средняя награда: {self.best_mean_reward:.2f}")
                 print(f"{'='*60}\n")
 
-                # Обновляем лучшую награду
                 if mean_reward > self.best_mean_reward:
                     self.best_mean_reward = mean_reward
                     print(f"🌟 НОВЫЙ РЕКОРД! Средняя награда: {mean_reward:.2f}\n")
@@ -640,7 +570,6 @@ class CustomCallback(BaseCallback):
         return True
 
     def _on_rollout_end(self) -> None:
-        # Сохраняем статистику эпизода
         if 'infos' in self.locals and len(self.locals['infos']) > 0:
             for info in self.locals['infos']:
                 if 'episode' in info:
@@ -657,13 +586,11 @@ class ImprovedTradingAgent:
     def __init__(self, env: ImprovedTradingEnvironment, model_path: Optional[str] = None):
         self.env = env
 
-        # Определяем device (GPU если доступен)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"🖥️ Используется: {self.device}")
         if torch.cuda.is_available():
             print(f"   GPU: {torch.cuda.get_device_name(0)}")
 
-        # Оптимизированные параметры политики
         policy_kwargs = dict(
             activation_fn=nn.Tanh,  # Tanh лучше для ограниченных действий
             net_arch=dict(
@@ -718,7 +645,6 @@ class ImprovedTradingAgent:
             print("\n✅ Обучение завершено!")
             self._print_training_stats()
 
-            # Автосохранение
             if save_best:
                 self.save("./models/improved_bot_latest")
                 if self.callback.best_mean_reward > -np.inf:
@@ -804,10 +730,8 @@ def main():
 ════════════════════════════════
     """)
 
-    # Создаем окружение
     env = ImprovedTradingEnvironment(initial_balance=10000, detailed_logging=False)
 
-    # Проверяем наличие сохраненной модели
     model_path = "./models/improved_bot_latest.zip"
     if os.path.exists(model_path):
         print(f"📂 Найдена сохраненная модель: {model_path}")
@@ -821,14 +745,11 @@ def main():
     else:
         agent = ImprovedTradingAgent(env)
 
-    # Обучение
     print("\n1️⃣ ФАЗА ОБУЧЕНИЯ")
     print("💡 Совет: Прервать обучение можно с помощью Ctrl+C (прогресс сохранится)\n")
 
-    # Постепенное обучение
     agent.train(total_timesteps=50000)  # Увеличиваем до 50k шагов
 
-    # Тестирование
     print("\n2️⃣ ФАЗА ТЕСТИРОВАНИЯ")
     agent.test(episodes=5)
 
